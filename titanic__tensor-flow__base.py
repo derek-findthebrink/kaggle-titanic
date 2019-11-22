@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib.pyplot import rcParams
-import os
+# from matplotlib.pyplot import rcParams
+# import os
 
 pd.set_option('display.max_row', 1000)
 pd.set_option('display.max_columns', 50)
@@ -81,12 +81,12 @@ test = df[pd.isnull(df['Survived'])]
 # %%
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV
-from keras.wrappers.scikit_learn import KerasClassifier
-from keras.models import Sequential
-from keras.layers import Dense, Activation, Dropout
+# from sklearn.model_selection import GridSearchCV
+# from keras.wrappers.scikit_learn import KerasClassifier
+# from keras.models import Sequential
+# from keras.layers import Dense, Activation, Dropout
 
-from numpy.random import seed
+# from numpy.random import seed
 
 # %%
 df.drop(['Cabin', 'Name', 'Ticket', 'PassengerId'], axis=1, inplace=True)
@@ -139,11 +139,19 @@ model.train(input_fn=input_func, max_steps=10000)
 pred_fn = tf.estimator.inputs.pandas_input_fn(x=X_val, batch_size=len(X_val), shuffle=False)
 predictions = list(model.predict(input_fn=pred_fn))
 
-final_preds = []
+final_predictions = []
 
 # %%
 for pred in predictions:
-  final_preds.append(pred['class_ids'][0])
+  final_predictions.append(pred['class_ids'][0])
 
 from sklearn.metrics import classification_report
-print(classification_report(y_val, final_preds))
+print(classification_report(y_val, final_predictions))
+
+# %%
+
+# final_predictions = model.predict()
+# output = pd.DataFrame({ 'PassengerId': test.PassengerId, 'Survived': final_predictions })
+
+# # %%
+# output.to_csv('output/tutorial__tensorflow.csv', index=False)
