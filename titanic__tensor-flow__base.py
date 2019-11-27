@@ -1,78 +1,151 @@
 # %%
 # To add a new cell, type '# %%'
 # To add a new markdown cell, type '# %% [markdown]'
+
+# TODO: Figure out proper way to treat dataset reassignment in python, without using class instance variables
+
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-# from matplotlib.pyplot import rcParams
-# import os
-
-pd.set_option('display.max_row', 1000)
-pd.set_option('display.max_columns', 50)
 
 
-train = pd.read_csv('./data/train.csv')
-test = pd.read_csv('./data/test.csv')
 
-df = pd.concat([train, test], axis=0, sort=True)
+# Setup
+# ----------------------------------------------------------------------
+def setup():
+  pd.set_option('display.max_row', 1000)
+  pd.set_option('display.max_columns', 50)
+
+def get_training_data():
+  return pd.read_csv('./data/train.csv')
+
+def get_test_data():
+  return pd.read_csv('./data/test.csv')
+
+def get_concatenated_data():
+  train = get_training_data()
+  test = get_test_data()
+  return pd.concat([train, test], axis=0, sort=True)
+
+
+
+# Feature engineering
+# ----------------------------------------------------------------------
+def create_title_feature(dataset):
+  # Targets are: Mr, Mrs, Master, Ms, Miss
+  # Must remove entries where key === value because replace function complains
+  #  - alternative is to use map, however using map resulted in a few NaN values
+  #    persisting in the frame for this feature
+  mapping = {
+    'Capt'        : 'Mr',
+    'Col'         : 'Mr',
+    'Countess'    : 'Mrs',
+    # problematic, best guess is there were more men as doctors back then
+    # => !should be computed from dataset!
+    'Dr'          : 'Mr',
+    'Don'         : 'Mr',
+    'Dona'        : 'Mrs',
+    'Jonkheer'    : 'Mr',
+    'Lady'        : 'Mrs',
+    'Major'       : 'Mr',
+    # 'Master'      : 'Master',
+    # 'Miss'        : 'Miss',
+    'Mlle'        : 'Miss',
+    'Mme'         : 'Mrs',
+    # 'Mr'          : 'Mr',
+    # 'Mrs'         : 'Mrs',
+    # 'Ms'          : 'Ms',
+    'Rev'         : 'Mr',
+    'Sir'         : 'Mr',
+  }
+
+  # extract Title feature (intermediate) from name feature
+  dataset['Title'] = dataset['Name'].str.extract('([A-Za-z]+)\.', expand=True)
+  dataset.replace({ 'Title': mapping }, inplace=True)
+  return dataset
+
+def create_family_size_feature(dataset):
+  dataset['Family_Size'] = dataset['Parch'] + dataset['SibSp']
+  return dataset
+
+
+
+def engineer_features(dataset):
+  dataset = create_title_feature(dataset)
+  dataset = create_family_size_feature(dataset)
+  return dataset
+
+
+
+# Dataset cleaning
+# -----------------------------------------------------------------------
+def fill_unknown_ages(dataset):
+  title_ages = dict(dataset.groupby('Title')['Age'].median())
+  dataset['age_med'] = dataset['Title'].apply(lambda x: title_ages[x])
+  dataset['Age'].fillna(dataset['age_med'], inplace=True)
+  del dataset['age_med']
+  return dataset
+
+def fill_unknown_fares(dataset):
+  class_fares = dict(dataset.groupby('Pclass')['Fare'].median())
+
+  dataset['fare_med'] = dataset['Pclass'].apply(lambda x: class_fares[x])
+  dataset['Fare'].fillna(dataset['fare_med'], inplace=True)
+  del dataset['fare_med']
+  return dataset
+
+def fill_unknown_embarked(dataset):
+  dataset['Embarked'].fillna(method='backfill', inplace=True)
+  return dataset
+
+
+
+def clean_data(dataset):
+  dataset = fill_unknown_ages(dataset)
+  dataset = fill_unknown_fares(dataset)
+  dataset = fill_unknown_embarked(dataset)
+  return dataset
+
+# TODO: heatmaps for correlated features on training set
+
+
+# Utilities
+def find_columns_with_null(dataset):
+  null_columns = dataset.columns[dataset.isnull().any()]
+  return dataset[null_columns].isnull().sum()
+
 
 # %%
-df['Title'] = df['Name'].str.extract('([A-Za-z]+)\.', expand=True)
-
-# TODO: complete this table, lots of values in the df do not have a corresponding map entry
-mapping = {
-  'Major': 'Mr',
-  'Col': 'Mr',
-  'Sir': 'Mr',
-  'Don': 'Mr',
-  'Jonkheer': 'Mr',
-  'Capt': 'Mr',
-  'Mlle': 'Miss',
-  'Mme': 'Mrs',
-  'Lady': 'Mrs',
-  'Countess': 'Mrs',
-  'Dona': 'Mrs',
-}
-
-df.replace({ 'Title': mapping }, inplace=True)
-
+# Run setup code and fetch concatenated data into var df
+setup()
+df = get_concatenated_data()
 
 # %%
+# engineer and clean features on df
+# TODO: turn in to class that consumes data and returns instance that includes processed data
+df = engineer_features(df)
+df = clean_data(df)
 
-# Computer closer approx. of ages
-title_ages = dict(df.groupby('Title')['Age'].median())
-df['age_med'] = df['Title'].apply(lambda x: title_ages[x])
-df['Age'].fillna(df['age_med'], inplace=True)
-del df['age_med']
 
-sns.countplot(x='Title', data=df, hue='Survived')
-plt.xticks(rotation=45)
-plt.show()
 
-# %%
-sns.countplot(x='Sex', data=df, hue='Survived')
 
-# %%
-sns.countplot(x='Title', data=df)
 
-# %%
-class_fares = dict(df.groupby('Pclass')['Fare'].median())
 
-df['fare_med'] = df['Pclass'].apply(lambda x: class_fares[x])
-df['Fare'].fillna(df['fare_med'], inplace=True)
-del df['fare_med']
 
-# %%
-df['Embarked'].fillna(method='backfill', inplace=True)
 
-# %%
-df['Family_Size'] = df['Parch'] + df['SibSp']
 
-# %% [markdown]
 
-# At this point, all data processing is complete. Training sets and test sets can be broken
-# up by selecting based on whether or not the survived feature is set
+
+
+# sns.countplot(x='Title', data=df, hue='Survived')
+# plt.xticks(rotation=45)
+# plt.show()
+
+# sns.countplot(x='Sex', data=df, hue='Survived')
+
+# sns.countplot(x='Title', data=df)
+
 
 # %%
 train = df[pd.notnull(df['Survived'])]
