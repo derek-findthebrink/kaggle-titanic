@@ -257,4 +257,31 @@ for pred in predictions:
 # %%
 test_submission = pd.DataFrame({'PassengerID': df_test.PassengerId, 'Survived': final_predictions })
 test_submission.to_csv('output/tutorial__tensorflow.csv', index=False)
+
+
 # %%
+# PCA Dimensionality reduction
+# ---------------------------------------------
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+variance_percentage = .99
+
+pca = PCA(n_components=variance_percentage)
+
+df_pca = df_train.copy()
+
+df_pca.drop(['Cabin', 'Name', 'Ticket', 'PassengerId'], axis=1, inplace=True)
+
+X_pca = pd.get_dummies(df_pca.drop(['Survived'], axis=1), columns=['Sex', 'Embarked', 'Title'])
+
+continuous = ['Age', 'Fare', 'Parch', 'Pclass', 'SibSp', 'Family_Size']
+scaler = StandardScaler()
+for var in continuous:
+  X_pca[var] = X_pca[var].astype('float64')
+  X_pca[var] = scaler.fit_transform(X_pca[var].values.reshape(-1, 1))
+
+X_transformed = pca.fit_transform(X_pca, df_pca.Survived)
+
+df_pca_output = pd.DataFrame(X_transformed)
+
