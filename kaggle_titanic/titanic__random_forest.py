@@ -1,19 +1,25 @@
-import numpy as np
+# import numpy as np
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
+
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    VotingClassifier,
+    StackingClassifier,
+    GradientBoostingClassifier,
+)
 from sklearn.feature_selection import RFE
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
+
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 from feature_engineering import (
     engineer_features,
@@ -21,6 +27,12 @@ from feature_engineering import (
     engineered_numerical_features,
 )
 
+from analysis import (
+    plot_correlation_matrixes,
+    plot_feature_importance,
+    plot_permutation_importance,
+    print_model_accuracy_report,
+)
 import ipdb
 
 
@@ -56,10 +68,20 @@ def extract_test_data(df):
     return df[pd.isnull(df["Survived"])]
 
 
-def get_datasets():
+def drop_unused_columns(df):
+    return df.drop(["Cabin", "Name", "PassengerId", "Ticket"], axis=1)
+
+
+base_numerical_features = {"Age", "Fare", "Parch", "SibSp"}
+base_categorical_features = {"Pclass", "Embarked", "Sex"}
+
+
+def get_datasets(drop=True):
     setup()
     df = get_concatenated_data()
     df = engineer_features(df)
+    if drop:
+        df = drop_unused_columns(df)
 
     train = extract_training_data(df)
     test = extract_test_data(df)
@@ -67,9 +89,6 @@ def get_datasets():
 
 
 def get_features():
-    base_numerical_features = {"Age", "Fare", "Parch", "SibSp"}
-    base_categorical_features = {"Pclass", "Embarked", "Sex"}
-
     numerical_features = base_numerical_features.union(engineered_numerical_features)
     categorical_features = base_categorical_features.union(
         engineered_categorical_features
@@ -103,9 +122,146 @@ def create_preprocessor():
     )
 
 
+class RFETransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, n_features_to_select=5):
+        self.n_features_to_select = n_features_to_select
+        self.rfe = None
+
+    def fit(self, X, y=None):
+        model = lrc()
+        self.rfe = RFE(model, n_features_to_select=self.n_features_to_select)
+        self.rfe.fit(X, y)
+        return self
+
+    def transform(self, X):
+        return self.rfe.transform(X)
+
+    def get_support(self):
+        return self.rfe.support_
+
+
+def lrc():
+    return LogisticRegression(max_iter=2000, random_state=87)
+
+
+def lrc_pipeline():
+    return Pipeline(
+        steps=[
+            ("preprocessor", create_preprocessor()),
+            ("rfe", RFETransformer(n_features_to_select=20)),
+            ("classifier", lrc()),
+        ]
+    )
+
+
+def rfc():
+    return RandomForestClassifier(n_estimators=100, random_state=87)
+
+
+def rfc_pipeline():
+    return Pipeline(
+        steps=[
+            ("preprocessor", create_preprocessor()),
+            ("classifier", rfc()),
+        ]
+    )
+
+
+def xgbc():
+    return XGBClassifier(
+        use_label_encoder=False, eval_metric="logloss", random_state=87
+    )
+
+
+def xgbc_pipeline():
+    return Pipeline(
+        steps=[
+            ("preprocessor", create_preprocessor()),
+            ("classifier", xgbc()),
+        ]
+    )
+
+
+def svc():
+    return SVC(probability=True, kernel="rbf", random_state=87)
+
+
+def svc_pipeline():
+    return Pipeline(
+        steps=[
+            ("preprocessor", create_preprocessor()),
+            ("svc", svc()),
+        ]
+    )
+
+
+def gbc():
+    return GradientBoostingClassifier(n_estimators=100, random_state=87)
+
+
+def knn():
+    return KNeighborsClassifier(n_neighbors=5)
+
+
+def knn_pipeline():
+    return Pipeline(
+        steps=[
+            ("preprocessor", create_preprocessor()),
+            ("classifier", knn()),
+        ]
+    )
+
+
+def get_base_models():
+    return [
+        ("rf", rfc_pipeline()),
+        ("xgb", xgbc_pipeline()),
+        ("svc", svc_pipeline()),
+        ("lr", lrc_pipeline()),
+    ]
+
+
+def voting_pipeline():
+    return VotingClassifier(
+        estimators=get_base_models(),
+        voting="soft",
+        weights=None,
+    )
+
+
+def stacking_pipeline():
+    return StackingClassifier(
+        estimators=get_base_models(),
+        final_estimator=lrc(),
+        cv=5,
+        stack_method="predict_proba",
+    )
+
+
+def recursive_feature_elimination(X, y, n_features, show_plot=True):
+    model = lrc()
+    rfe = RFE(model, n_features_to_select=n_features)
+    X_rfe = rfe.fit_transform(X, y)
+    selected_features = X.columns[rfe.support_]
+    print(selected_features)
+
+    if show_plot:
+        model_plt = lrc()
+        rfe_plt = RFE(model_plt, n_features_to_select=n_features)
+        fit = rfe_plt.fit(X, y)
+        feature_ranking = pd.Series(fit.ranking_, index=X.columns).sort_values()
+
+        plt.figure(figsize=(10, 8))
+        sns.barplot(x=feature_ranking.values, y=feature_ranking.index)
+        plt.title("Feature Ranking by RFE")
+        plt.show()
+
+    return pd.DataFrame(X_rfe, columns=selected_features)
+
+
 def create_analysis_dataset():
     numerical_features, categorical_features = get_features()
-    test, train = get_datasets()
+    _, train = get_datasets()
     df = train
     preprocessor = create_preprocessor()
     df_transformed = preprocessor.fit_transform(df)
@@ -124,187 +280,6 @@ def create_analysis_dataset():
     return df_engineered
 
 
-def plot_feature_importance():
-    df = create_analysis_dataset()
-    X = df.drop("Survived", axis=1)
-    y = df["Survived"]
-    model = RandomForestClassifier(n_estimators=100, random_state=87)
-    model.fit(X, y)
-    importances = model.feature_importances_
-    feature_names = X.columns
-
-    importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
-    importance_df = importance_df.sort_values(by="Importance", ascending=False)
-
-    plt.figure(figsize=(10, 8))
-    sns.barplot(x="Importance", y="Feature", data=importance_df)
-    plt.title("Feature Importance")
-    plt.show()
-
-
-def lrm():
-    return LogisticRegression(max_iter=2000, random_state=87)
-
-
-def recursive_feature_elimination(X, y, n_features, show_plot=True):
-    model = lrm()
-    rfe = RFE(model, n_features_to_select=n_features)
-    X_rfe = rfe.fit_transform(X, y)
-    selected_features = X.columns[rfe.support_]
-    print(selected_features)
-
-    if show_plot:
-        model_plt = lrm()
-        rfe_plt = RFE(model_plt, n_features_to_select=n_features)
-        fit = rfe_plt.fit(X, y)
-        feature_ranking = pd.Series(fit.ranking_, index=X.columns).sort_values()
-
-        plt.figure(figsize=(10, 8))
-        sns.barplot(x=feature_ranking.values, y=feature_ranking.index)
-        plt.title("Feature Ranking by RFE")
-        plt.show()
-
-    return pd.DataFrame(X_rfe, columns=selected_features)
-
-
-def plot_correlation_matrixes():
-    df_engineered = create_analysis_dataset()
-
-    # Compute the correlation matrix
-    correlation_matrix = df_engineered.corr()
-
-    # Get the correlation with the target variable
-    correlation_with_survived = correlation_matrix["Survived"].drop("Survived")
-
-    # Display the correlation with the target variable
-    print(correlation_with_survived)
-
-    # Bar plot of correlation with Survived
-    plt.figure(figsize=(10, 8))
-    correlation_with_survived.sort_values(ascending=False).plot(kind="bar")
-    plt.title("Correlation of Features with Survived")
-    plt.ylabel("Correlation coefficient")
-    plt.xlabel("Feature")
-    plt.show()
-
-    # Heatmap of correlation matrix
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
-    plt.title("Correlation Matrix")
-    plt.show()
-
-
-class RFETransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, n_features_to_select=5):
-        self.n_features_to_select = n_features_to_select
-        self.rfe = None
-
-    def fit(self, X, y=None):
-        model = lrm()
-        self.rfe = RFE(model, n_features_to_select=self.n_features_to_select)
-        self.rfe.fit(X, y)
-        return self
-
-    def transform(self, X):
-        return self.rfe.transform(X)
-
-    def get_support(self):
-        return self.rfe.support_
-
-
-def create_model():
-    xgb_classifier = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
-    classifier = RandomForestClassifier(n_estimators=100, random_state=87)
-    model_1 = Pipeline(
-        steps=[
-            ("preprocessor", create_preprocessor()),
-            ("classifier", classifier),
-        ]
-    )
-    model_2 = Pipeline(
-        steps=[("preprocessor", create_preprocessor()), ("classifier", xgb_classifier)]
-    )
-    model_3 = Pipeline(
-        steps=[
-            ("preprocessor", create_preprocessor()),
-            ("svc", SVC(probability=True, kernel="rbf")),
-        ]
-    )
-    model_4 = Pipeline(
-        steps=[
-            ("preprocessor", create_preprocessor()),
-            ("rfe", RFETransformer(n_features_to_select=20)),
-            ("classifier", lrm()),
-        ]
-    )
-
-    return VotingClassifier(
-        estimators=[
-            ("rf", model_1),
-            ("xgb", model_2),
-            ("svc", model_3),
-            ("lr", model_4),
-        ],
-        voting="soft",
-        weights=None,
-    )
-
-
-def drop_unused_columns(df):
-    return df.drop(["Survived", "Cabin", "Name", "PassengerId", "Ticket"], axis=1)
-
-
-def get_test_train_split(X, y):
-    return train_test_split(X, y, test_size=0.1, random_state=42)
-
-
-def train_model(model, X, y, show_reports=False):
-    if show_reports:
-        X_train, X_test, y_train, y_val = get_test_train_split(X, y)
-        model.fit(X_train, y_train)
-    else:
-        model.fit(X, y)
-
-    if show_reports:
-        y_pred = model.predict(X_test)
-        print(f"\nAccuracy: {accuracy_score(y_val, y_pred)}\n\n")
-        print(f"Classification Report:\n{classification_report(y_val, y_pred)}\n\n")
-        cm = pd.DataFrame(
-            confusion_matrix(y_val, y_pred),
-            index=["Actual Positive", "Actual Negative"],
-            columns=["Predicted Positive", "Predicted Negative"],
-        )
-        print(f"Confusion Matrix:\n{cm}")
-
-    return model
-
-
-from sklearn.inspection import permutation_importance
-
-
-def plot_permutation_importance():
-    df = create_analysis_dataset()
-    X = df.drop("Survived", axis=1)
-    y = df["Survived"]
-    model = RandomForestClassifier(n_estimators=100, random_state=87)
-    train_model(model, X, y, show_reports=False)
-    results = permutation_importance(
-        model, X, y, scoring="accuracy", n_repeats=10, random_state=87
-    )
-    importance_df = pd.DataFrame(
-        {"Feature": X.columns, "Importance": results.importances_mean}
-    )
-    importance_df = importance_df.sort_values(by="Importance", ascending=False)
-
-    plt.figure(figsize=(10, 8))
-    sns.barplot(x="Importance", y="Feature", data=importance_df)
-    plt.title("Permutation Feature Importance")
-    plt.show()
-
-
-# plot_permutation_importance()
-
-
 # classifiers = []
 # data_preprocessors = []
 
@@ -317,12 +292,16 @@ def plot_permutation_importance():
 #       data_preprocessors.append(component)
 
 
+def train_model(model, X, y):
+    model.fit(X, y)
+
+    return model
+
+
 def create_submission(model):
-    (df_test, train) = get_datasets()
+    df_test, _ = get_datasets(drop=False)
 
-    # df = drop_unused_columns(df_test)
-
-    predictions = model.predict(df)
+    predictions = model.predict(df_test)
     predictions = list(map(lambda x: int(x), predictions))
     test_submission = pd.DataFrame(
         {"PassengerId": df_test.PassengerId, "Survived": predictions}
@@ -334,11 +313,24 @@ df_test, df_train = get_datasets()
 X = df_train.drop("Survived", axis=1)
 y = df_train["Survived"]
 
-train_model(create_model(), X, y, show_reports=True)
+# train_model(voting_pipeline(), X, y)
+# train_model(stacking_pipeline(), X, y)
 
 # dfa = create_analysis_dataset()
 # dfa_X = dfa.drop("Survived", axis=1)
 # dfa_y = dfa["Survived"]
 # recursive_feature_elimination(dfa_X, dfa_y, 10)
 
-# create_submission(train_model(create_model(), X, y, show_reports=False))
+# plot_correlation_matrixes(create_analysis_dataset())
+# plot_feature_importance(create_analysis_dataset())
+# plot_permutation_importance(create_analysis_dataset())
+# print_model_accuracy_report(rfc_pipeline(), X, y, label="Random Forest Classifier")
+# print_model_accuracy_report(xgbc_pipeline(), X, y, label="XGBoost Classifier")
+# print_model_accuracy_report(svc_pipeline(), X, y, label="Support Vector Classifier")
+# print_model_accuracy_report(
+#     lrc_pipeline(), X, y, label="Logistic Regression Classifier"
+# )
+print_model_accuracy_report(voting_pipeline(), X, y, label="Voting Classifier")
+# print_model_accuracy_report(stacking_pipeline(), X, y, label="Stacking Classifier")
+
+create_submission(train_model(voting_pipeline(), X, y))
