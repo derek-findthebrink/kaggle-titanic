@@ -122,8 +122,41 @@ def create_age_category_feature(dataset):
     return dataset
 
 
+def normalize(df):
+
+    def name_normalizer(name):
+        return " ".join([v.strip(",()[].\"'") for v in name.split(" ")])
+
+    def ticket_item(ticket):
+        items = ticket.split(" ")
+        if len(items) == 1:
+            return "NONE"
+        return (
+            "_".join(items[0:-1])
+            .replace(".", "")
+            .replace("/", "")
+            .replace("_", "")
+            .upper()
+        )
+
+    def ticket_number(ticket):
+        number = ticket.split()[-1]
+        if not number.isdigit():
+            return None
+        return number
+
+    df["Name"] = df["Name"].apply(name_normalizer)
+    df["Ticket_Number"] = df["Ticket"].apply(ticket_number)
+    engineered_numerical_features.add("Ticket_Number")
+    df["Ticket_Item"] = df["Ticket"].apply(ticket_item)
+    engineered_categorical_features.add("Ticket_Item")
+    return df
+
+
 def engineer_features(dataset):
+    # NOTE: order matters for the following two functions
     dataset = create_title_feature(dataset)
+    dataset = normalize(dataset)
     dataset = create_family_size_feature(dataset)
     dataset = create_is_alone_feature(dataset)
     dataset = create_is_child_feature(dataset)

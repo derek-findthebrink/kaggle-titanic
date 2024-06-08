@@ -210,9 +210,6 @@ def get_datasets():
     return (test, train)
 
 
-ipdb.set_trace()
-
-
 features = [
     "Age",
     "Embarked",
